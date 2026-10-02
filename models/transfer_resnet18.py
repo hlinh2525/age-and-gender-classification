@@ -1,0 +1,1 @@
+"""Placeholder for the future ResNet18 transfer-learning architecture."""

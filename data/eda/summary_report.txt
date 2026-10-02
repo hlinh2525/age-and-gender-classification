@@ -1,0 +1,33 @@
+UTKFace EDA Summary Report
+============================================================
+Total cleaned samples : 23,054
+Duplicate rows        : 0
+
+Age   : min=1, max=116, mean=33.25, std=19.91
+Gender ratio (M:F)    : 12,021 : 11,033
+Race distribution     : {'White': 9826, 'Black': 4414, 'Indian': 3838, 'Asian': 3368, 'Others': 1608}
+
+Sampled image size(s) : [[200, 200]]
+Mean brightness       : 125.05
+Mean file size (KB)   : 4.97
+
+Correlation with age:
+  race_White: 0.204
+  race_Black: 0.014
+  race_Indian: -0.042
+  gender: -0.127
+  race_Others: -0.141
+  race_Asian: -0.157
+
+Figures saved in data/eda/figures/:
+  - 01_age_distribution.png
+  - 02_age_class_distribution.png
+  - 03_gender_distribution.png
+  - 04_race_distribution.png
+  - 05_age_by_gender.png
+  - 06_age_by_race.png
+  - 07_gender_by_race.png
+  - 08_image_properties.png
+  - 09_image_quality_vs_age.png
+  - 10_correlation_matrix.png
+  - 11_split_comparison.png

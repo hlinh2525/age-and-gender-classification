@@ -1,0 +1,56 @@
+{
+  "image_size": [
+    224,
+    224
+  ],
+  "color": "RGB",
+  "batch_size": 32,
+  "gender_encoding": {
+    "0": "Male",
+    "1": "Female"
+  },
+  "age_target": "age_class",
+  "age_labels": [
+    "0-12",
+    "13-19",
+    "20-29",
+    "30-39",
+    "40-54",
+    "55+"
+  ],
+  "age_num_classes": 6,
+  "scratch": {
+    "pixel_range": [
+      0,
+      1
+    ]
+  },
+  "resnet18": {
+    "pixel_range_before_normalize": [
+      0,
+      1
+    ],
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "train_augmentation": {
+    "horizontal_flip_probability": 0.5,
+    "brightness": 0.1,
+    "contrast": 0.1
+  },
+  "validation_test_augmentation": false,
+  "identity_disjoint_verified": false,
+  "split_sha256": {
+    "train": "2ae8603c811e43fa0a99f01f8cc6144976ad8ea7a67f0a05c7d790d70d420b30",
+    "val": "40e7091ec23f7d7b2a8a962399bb6902490e1877a2cc55c4660838fddc631345",
+    "test": "27bb7d8784dc04f65b9efaae65b29daef7e7f48bc6c5381e9f9ae38307c209a8"
+  }
+}

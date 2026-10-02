@@ -1,0 +1,38 @@
+# Python environment
+.venv/
+venv/
+env/
+
+# Python cache and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Large raw dataset
+#/data/raw/
+
+# Generated preprocessing outputs
+#/data/preprocessing/
+
+# Generated model outputs and experiment results
+#/data/models/
+
+# Generated EDA figures and reports
+#/data/eda/figures/
+#/data/eda/summary_report.txt
+
+# Temporary experiment files
+*.log
+*.tmp
