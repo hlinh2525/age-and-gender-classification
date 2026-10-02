@@ -21,7 +21,7 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / "preprocessing"
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 32
-NUM_WORKERS = 4
+NUM_WORKERS = 2
 
 SPLIT_NAMES = ("train", "val", "test")
 COLUMNS = ["member", "age_class", "gender", "race"]
