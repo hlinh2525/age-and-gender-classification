@@ -17,10 +17,10 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / "models" / "complex_cnn"
 GRADCAM_SELECTION_PATH = OUTPUT_DIR / "gradcam_samples.json"
 IMAGE_SIZE = 224
 BATCH_SIZE = 32
-MAX_EPOCHS = 30
-LEARNING_RATE = 1e-3   # dùng LR như SimpleCNN
+MAX_EPOCHS = 50
+LEARNING_RATE = 3e-4   # dùng LR như SimpleCNN
 WEIGHT_DECAY = 1e-4
-PATIENCE = 5
+PATIENCE = 8
 GRADCAM_SAMPLE_COUNT = 8
 
 

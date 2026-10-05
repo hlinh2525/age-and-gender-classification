@@ -5,8 +5,8 @@ import torch
 from torch import nn
 from age_config import AGE_LABELS, NUM_AGE_CLASSES
 
-AGE_LOSS_WEIGHT = 1.0
-GENDER_LOSS_WEIGHT = 1.0
+AGE_LOSS_WEIGHT = 1.5
+GENDER_LOSS_WEIGHT = 0.5
 
 class MultitaskLoss(nn.Module):
     def __init__(
