@@ -7,7 +7,7 @@ from explainability import (
     save_gradcam_visualization,
     select_gradcam_indices
 )
-from models.complex_cnn_improved import ComplexCNN
+from models.complex_cnn_age_focused import ComplexCNN
 from preprocessing import build_loaders
 from training import compute_age_class_weights, train_model
 
