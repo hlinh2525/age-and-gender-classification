@@ -199,7 +199,7 @@ def train_model(model, train_loader, val_loader, device, output_dir, model_name,
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", factor=0.5, patience=4, min_lr=1e-6
+        optimizer, mode="max", factor=0.5, patience=3, min_lr=1e-6
     )
     config = {
         "model": model_name,
@@ -217,7 +217,7 @@ def train_model(model, train_loader, val_loader, device, output_dir, model_name,
         "age_loss_weight": AGE_LOSS_WEIGHT,
         "gender_loss": "CrossEntropyLoss",
         "gender_loss_weight": GENDER_LOSS_WEIGHT,
-        "checkpoint_metric": "age_macro_f1"
+        "checkpoint_metric": "0.7 * age_accuracy + 0.3 * age_macro_f1"
     }
     checkpoint_path = output_dir / "best_model.pt"
     history = []
@@ -227,16 +227,25 @@ def train_model(model, train_loader, val_loader, device, output_dir, model_name,
         start_time = time.perf_counter()
         train_metrics = run_epoch(model, train_loader, criterion, device, optimizer)
         val_metrics = run_epoch(model, val_loader, criterion, device)
-        scheduler.step(val_metrics["age_macro_f1"])
+
+        # This score is used only for checkpoint selection, scheduler and
+        # early stopping. The training loss above is still used for
+        # backpropagation and parameter updates.
+        checkpoint_score = (
+            0.7 * val_metrics["age_accuracy"]
+            + 0.3 * val_metrics["age_macro_f1"]
+        )
+        scheduler.step(checkpoint_score)
+
         history.append({
             "epoch": epoch,
             "learning_rate": optimizer.param_groups[0]["lr"],
             "seconds": time.perf_counter() - start_time,
             "train": train_metrics,
-            "val": val_metrics
+            "val": val_metrics,
+            "checkpoint_score": checkpoint_score
         })
         save_json(history, output_dir / "history.json")
-        checkpoint_score = val_metrics["age_macro_f1"]
         if checkpoint_score > best_checkpoint_score:
             best_checkpoint_score = checkpoint_score
             epochs_without_improvement = 0
@@ -248,7 +257,9 @@ def train_model(model, train_loader, val_loader, device, output_dir, model_name,
             f"{model_name} epoch {epoch:02d}/{max_epochs} | "
             f"train_loss={train_metrics['loss']:.4f} | "
             f"val_loss={val_metrics['loss']:.4f} | "
+            f"val_age_acc={val_metrics['age_accuracy']:.4f} | "
             f"val_age_macro_f1={val_metrics['age_macro_f1']:.4f} | "
+            f"checkpoint_score={checkpoint_score:.4f} | "
             f"val_gender_acc={val_metrics['gender_accuracy']:.4f} | "
             f"lr={optimizer.param_groups[0]['lr']:.2e} | "
         )
