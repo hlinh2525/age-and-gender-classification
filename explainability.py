@@ -1,71 +1,85 @@
 import json
-from pathlib import Path
-
-import matplotlib.pyplot as plt
+import math
 import torch
-import torch.nn.functional as F
+from preprocessing import IMAGENET_MEAN, IMAGENET_STD
+from age_config import AGE_LABELS
 
 
-IMAGENET_MEAN = torch.tensor((0.485, 0.456, 0.406)).view(3, 1, 1)
-IMAGENET_STD = torch.tensor((0.229, 0.224, 0.225)).view(3, 1, 1)
+def compute_gradcam(model, images, target, target_layer):
+    activations = {}
 
+    def save_activations(_module, _inputs, features):
+        activations["features"] = features
+        features.retain_grad()
 
-def select_gradcam_indices(loader, selection_path, sample_count=8):
-    count = min(sample_count, len(loader.dataset))
-    indices = list(range(count))
-
-    selection_path = Path(selection_path)
-    selection_path.parent.mkdir(parents=True, exist_ok=True)
-    selection_path.write_text(
-        json.dumps({"indices": indices}, indent=2),
-        encoding="utf-8",
-    )
-    return indices
-
-
-def _display_image(image, model_type):
-    image = image.detach().cpu()
-    if model_type == "resnet18":
-        image = image * IMAGENET_STD + IMAGENET_MEAN
-    return image.clamp(0, 1).permute(1, 2, 0).numpy()
-
-
-def _make_cam(model, image, target_name, target_layer, device):
-    activations = []
-    gradients = []
-
-    def forward_hook(_, __, output):
-        activations.append(output)
-
-    def backward_hook(_, __, grad_output):
-        gradients.append(grad_output[0])
-
-    forward_handle = target_layer.register_forward_hook(forward_hook)
-    backward_handle = target_layer.register_full_backward_hook(backward_hook)
-
+    hook = target_layer.register_forward_hook(save_activations)
     try:
         model.zero_grad(set_to_none=True)
-        outputs = model(image.to(device))
-        logits = outputs[target_name]
-        target_index = logits.argmax(dim=1).item()
-        logits[0, target_index].backward()
-
-        weights = gradients[0].mean(dim=(2, 3), keepdim=True)
-        cam = (weights * activations[0]).sum(dim=1, keepdim=True)
-        cam = F.relu(cam)
-        cam = F.interpolate(
-            cam,
-            size=image.shape[-2:],
+        outputs = model(images)
+        target(outputs).sum().backward()
+        feature_maps = activations["features"]
+        gradients = feature_maps.grad
+        weights = gradients.mean(dim=(2, 3), keepdim=True)
+        cam = (weights * feature_maps).sum(dim=1).relu()
+        cam = torch.nn.functional.interpolate(
+            cam.unsqueeze(1),
+            size=images.shape[-2:],
             mode="bilinear",
-            align_corners=False,
-        )
-        cam = cam[0, 0].detach().cpu()
-        cam = cam - cam.min()
-        cam = cam / cam.max().clamp_min(1e-8)
-        return cam.numpy(), target_index
+            align_corners=False
+        ).squeeze(1)
+        cam_min = cam.flatten(1).min(dim=1).values[:, None, None]
+        cam_max = cam.flatten(1).max(dim=1).values[:, None, None]
+        return (cam - cam_min) / (cam_max - cam_min).clamp_min(1e-8)
     finally:
-        forward_handle.remove()
-        backward_handle.remove()
+        hook.remove()
+
+
+def select_gradcam_indices(loader, selection_path, sample_count):
+    members = loader.dataset.data["member"].astype(str).tolist()
+    member_to_index = {member: index for index, member in enumerate(members)}
+    sample_count = min(sample_count, len(members))
+
+    if selection_path.is_file():
+        selected_members = json.loads(
+            selection_path.read_text(encoding="utf-8")
+        )["members"]
+        selected_members = [str(member) for member in selected_members]
+        if (
+            len(selected_members) == sample_count
+            and len(set(selected_members)) == sample_count
+            and all(member in member_to_index for member in selected_members)
+        ):
+            return [member_to_index[member] for member in selected_members]
+
+    selected_indices = torch.randperm(len(members))[:sample_count].tolist()
+    selected_members = [members[index] for index in selected_indices]
+
+    selection_path.parent.mkdir(parents=True, exist_ok=True)
+    selection_path.write_text(
+        json.dumps({"members": selected_members}, indent=2),
+        encoding="utf-8"
+    )
+    return [member_to_index[member] for member in selected_members]
+
+
+def _prediction_target(outputs, target_name):
+    if target_name not in ("age", "gender"):
+        raise ValueError("target_name must be age or gender")
+    predicted = outputs[target_name].argmax(dim=1)
+    target = lambda predictions: predictions[target_name].gather(
+        1, predicted[:, None]
+    ).squeeze(1)
+    if target_name == "age":
+        titles = [
+            f"Age: {AGE_LABELS[value.item()]}"
+            for value in predicted.detach().cpu()
+        ]
+    else:
+        titles = [
+            f"Gender: {value.item()}"
+            for value in predicted.detach().cpu()
+        ]
+    return target, titles
 
 
 def save_gradcam_visualization(
@@ -76,44 +90,43 @@ def save_gradcam_visualization(
     target_name,
     selected_indices,
     target_layer,
-    model_type="scratch",
+    model_type="scratch"
 ):
+    import matplotlib.pyplot as plt
+
+    if model_type not in ("scratch", "resnet18"):
+        raise ValueError("model_type must be either scratch or resnet18.")
+
+    images = torch.stack([
+        loader.dataset[index]["image"] for index in selected_indices
+    ]).to(device)
     model.eval()
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    columns = min(4, max(1, len(selected_indices)))
-    rows = (len(selected_indices) + columns - 1) // columns
-    figure, axes = plt.subplots(
-        rows,
-        columns,
-        figsize=(4 * columns, 4 * rows),
-        squeeze=False,
-    )
-
     with torch.enable_grad():
-        for plot_index, sample_index in enumerate(selected_indices):
-            sample = loader.dataset[sample_index]
-            image = sample["image"].unsqueeze(0)
-            cam, _ = _make_cam(
-                model,
-                image,
-                target_name,
-                target_layer,
-                device,
+        outputs = model(images)
+        target, titles = _prediction_target(outputs, target_name)
+        heatmaps = compute_gradcam(model, images, target, target_layer)
+        heatmaps = heatmaps.detach().cpu()
+
+    columns = 4
+    rows = math.ceil(len(images) / columns)
+    figure, axes = plt.subplots(
+        rows, columns, figsize=(12, 3 * rows), squeeze=False
+    )
+    for index, axis in enumerate(axes.flat):
+        axis.axis("off")
+        if index >= len(images):
+            continue
+        image = images[index].detach().cpu().permute(1, 2, 0)
+        if model_type == "resnet18":
+            image = (
+                image * torch.tensor(IMAGENET_STD)
+                + torch.tensor(IMAGENET_MEAN)
             )
-
-            row = plot_index // columns
-            column = plot_index % columns
-            axis = axes[row][column]
-            display_image = _display_image(sample["image"], model_type)
-            axis.imshow(display_image)
-            axis.imshow(cam, cmap="jet", alpha=0.38)
-            axis.axis("off")
-
-    for plot_index in range(len(selected_indices), rows * columns):
-        axes[plot_index // columns][plot_index % columns].axis("off")
-
+        image = image.clamp(0, 1)
+        axis.imshow(image)
+        axis.imshow(heatmaps[index], cmap="jet", alpha=0.45)
+        axis.set_title(titles[index])
+    figure.suptitle(f"Grad-CAM: {target_name}")
     figure.tight_layout()
     figure.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(figure)

@@ -1,27 +1,20 @@
 import argparse
 from pathlib import Path
-
 import torch
-
 from evaluation import evaluate_test, load_best_checkpoint, print_metrics
-from explainability import (
-    save_gradcam_visualization,
-    select_gradcam_indices,
-)
+from explainability import (save_gradcam_visualization, select_gradcam_indices)
 from models.simple_cnn import SimpleCNN
 from preprocessing import build_loaders
 from training import compute_age_class_weights, train_model
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / "models" / "simple_cnn"
-
 IMAGE_SIZE = 224
 BATCH_SIZE = 32
-MAX_EPOCHS = 50
-LEARNING_RATE = 3e-4
+MAX_EPOCHS = 30
+LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-PATIENCE = 8
+PATIENCE = 5
 GRADCAM_SAMPLE_COUNT = 8
 
 
@@ -42,7 +35,7 @@ def close_datasets(loaders):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train Simple CNN for UTKFace age and gender classification"
+        description="Train Simple CNN for UTKFace age and gender prediction"
     )
     parser.add_argument("--epochs", type=int, default=MAX_EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -58,14 +51,11 @@ def main():
     loaders = build_loaders(
         model_type="scratch",
         image_size=IMAGE_SIZE,
-        batch_size=args.batch_size,
+        batch_size=args.batch_size
     )
     model = SimpleCNN().to(device)
-    age_class_weights = compute_age_class_weights(
-        loaders["train"],
-        device,
-    )
-
+    age_class_weights = compute_age_class_weights(loaders["train"], device)
+    
     try:
         _, checkpoint_path = train_model(
             model=model,
@@ -78,9 +68,8 @@ def main():
             learning_rate=args.learning_rate,
             weight_decay=args.weight_decay,
             patience=args.patience,
-            age_class_weights=age_class_weights,
+            age_class_weights=age_class_weights
         )
-
         checkpoint = load_best_checkpoint(model, checkpoint_path, device)
         test_metrics = evaluate_test(
             model,
@@ -88,18 +77,16 @@ def main():
             device,
             OUTPUT_DIR,
             age_class_weights=age_class_weights,
-            checkpoint_config=checkpoint.get("config"),
+            checkpoint_config=checkpoint.get("config")
         )
-
         print("Test metrics:")
         print_metrics(test_metrics)
 
         gradcam_indices = select_gradcam_indices(
             loader=loaders["val"],
             selection_path=OUTPUT_DIR / "gradcam_samples.json",
-            sample_count=GRADCAM_SAMPLE_COUNT,
+            sample_count=GRADCAM_SAMPLE_COUNT
         )
-
         for target_name in ["age", "gender"]:
             save_gradcam_visualization(
                 model=model,
@@ -109,11 +96,10 @@ def main():
                 target_name=target_name,
                 selected_indices=gradcam_indices,
                 target_layer=model.get_gradcam_layer(),
-                model_type="scratch",
+                model_type="scratch"
             )
     finally:
         close_datasets(loaders)
-
 
 if __name__ == "__main__":
     main()

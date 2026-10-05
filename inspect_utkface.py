@@ -1,19 +1,21 @@
-import re
-from hashlib import sha256
-from io import BytesIO
-from pathlib import Path
-from zipfile import ZipFile
-
 import pandas as pd
+import re
+from pathlib import Path
+from io import BytesIO
+from hashlib import sha256
+from zipfile import ZipFile
 from PIL import Image
 from sklearn.model_selection import train_test_split
-
 from age_config import age_to_class
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
 RAW_ARCHIVE = PROJECT_ROOT / "data" / "raw" / "UTKFace.zip"
 METADATA_DIR = PROJECT_ROOT / "data" / "metadata"
+
+IMAGE_SIZE = (224, 224)
+RANDOM_STATE = 42
 
 TRAIN_RATIO = 0.70
 VAL_RATIO = 0.15
@@ -30,7 +32,6 @@ METADATA_COLUMNS = [
 LABEL_COLUMNS = ["age", "gender", "race"]
 
 METADATA_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def inspect_dataset():
     records = []
@@ -57,10 +58,11 @@ def inspect_dataset():
                 invalid_filenames.append(filename)
                 continue
 
+            age = int(match.group("age"))
+            gender = int(match.group("gender"))
+            race = int(match.group("race"))
+
             try:
-                age = int(match.group("age"))
-                gender = int(match.group("gender"))
-                race = int(match.group("race"))
                 image_bytes = archive.read(member)
                 image_hash = sha256(image_bytes).hexdigest()
 
@@ -69,51 +71,80 @@ def inspect_dataset():
                     width, height = image.size
                     channels = len(image.getbands())
 
-                date = pd.to_datetime(
-                    match.group("timestamp"),
-                    format="%Y%m%d%H%M%S%f",
-                    errors="coerce"
+            except (OSError, ValueError) as exc:
+                corrupted_images.append(
+                    {
+                        "member": member,
+                        "reason": str(exc)
+                    }
                 )
+                continue
 
-            except (OSError, ValueError, KeyError) as exc:
-                corrupted_images.append({
+            records.append(
+                {
                     "member": member,
-                    "reason": str(exc)
-                })
-                continue
-
-            if pd.isna(date):
-                invalid_filenames.append(filename)
-                continue
-
-            records.append({
-                "member": member,
-                "age": age,
-                "gender": gender,
-                "race": race,
-                "date": date,
-                "sha256": image_hash,
-                "width": width,
-                "height": height,
-                "channels": channels,
-            })
+                    "age": age,
+                    "gender": gender,
+                    "race": race,
+                    "date": pd.to_datetime(
+                        match.group("timestamp"),
+                        format="%Y%m%d%H%M%S%f"
+                    ),
+                    "sha256": image_hash,
+                    "width": width,
+                    "height": height,
+                    "channels": channels
+                }
+            )
 
     metadata = pd.DataFrame(records)
 
     print("\n" + "=" * 60)
     print("DATASET INSPECTION")
     print("=" * 60)
+
     print(f"JPG files found   : {len(image_files):,}")
     print(f"Valid images      : {len(metadata):,}")
     print(f"Invalid filenames : {len(invalid_filenames):,}")
+    if invalid_filenames:
+        for filename in invalid_filenames:
+            print(f"  - {filename}")
+
     print(f"Corrupted images  : {len(corrupted_images):,}")
 
     if not metadata.empty:
-        print(f"Age range         : {metadata['age'].min()}-{metadata['age'].max()}")
+        dimensions = metadata[["width", "height"]].value_counts().to_dict()
+        print(f"Image dimensions  : {dimensions}")
+
+        print(
+            f"Channels          : "
+            f"{metadata['channels'].value_counts().sort_index().to_dict()}"
+        )
+
+        print(
+            f"Age range         : "
+            f"{metadata['age'].min()}-{metadata['age'].max()}"
+        )
+
         print("\nGender:")
-        print(metadata["gender"].map({0: "Male", 1: "Female"}).value_counts())
+        print(
+            metadata["gender"]
+            .map({0: "Male", 1: "Female"})
+            .value_counts()
+        )
+
         print("\nRace:")
-        print(metadata["race"].value_counts().sort_index())
+        print(
+            metadata["race"]
+            .map({
+                0: "White",
+                1: "Black",
+                2: "Asian",
+                3: "Indian",
+                4: "Others"
+            })
+            .value_counts()
+        )
 
     return metadata
 
@@ -122,20 +153,25 @@ def clean_metadata(metadata):
     before = len(metadata)
     clean = metadata.copy()
 
-    clean = clean.loc[clean["age"].between(0, 116)].copy()
-    clean = clean.loc[clean["gender"].isin([0, 1])].copy()
-    clean = clean.loc[clean["race"].isin([0, 1, 2, 3, 4])].copy()
-    clean = clean.loc[clean["channels"] == 3].copy()
+    clean = clean.loc[clean["age"].between(1, 116)].copy()
+
+    clean = clean.loc[clean["gender"].isin([0, 1])]
+
+    clean = clean.loc[clean["race"].isin([0, 1, 2, 3, 4])]
+
+    clean = clean.loc[clean["channels"] == 3]
 
     labels_per_hash = clean.groupby("sha256")[LABEL_COLUMNS].nunique()
     conflict_hashes = labels_per_hash.index[
         labels_per_hash.gt(1).any(axis=1)
     ]
-    clean = clean.loc[~clean["sha256"].isin(conflict_hashes)].copy()
+    conflict_files = clean.loc[clean["sha256"].isin(conflict_hashes)]
+    clean = clean.loc[~clean["sha256"].isin(conflict_hashes)]
 
     duplicate_files = clean.loc[clean.duplicated("sha256", keep=False)]
     duplicate_group_count = duplicate_files["sha256"].nunique()
     duplicate_file_count = len(duplicate_files)
+    removed_duplicate_count = duplicate_file_count - duplicate_group_count
     clean = clean.drop_duplicates(subset="sha256", keep="first").copy()
 
     clean["age"] = clean["age"].astype("int64")
@@ -157,64 +193,93 @@ def clean_metadata(metadata):
     print(f"Removed          : {before - len(clean):,}")
     print(f"Same-label groups: {duplicate_group_count:,}")
     print(f"Same-label files : {duplicate_file_count:,}")
+    print(f"Duplicate removed: {removed_duplicate_count:,}")
     print(f"Conflict groups  : {len(conflict_hashes):,}")
+    print(f"Conflict files   : {len(conflict_files):,}")
 
     return clean
 
 
-def _make_strata(data):
-    return (
-        data["age_class"].astype(str)
-        + "_"
-        + data["gender"].astype(str)
-    )
-
-
-def _safe_strata(data):
-    strata = _make_strata(data)
-    if strata.value_counts().min() >= 2:
-        return strata
-
-    gender_strata = data["gender"].astype(str)
-    if gender_strata.value_counts().min() >= 2:
-        return gender_strata
-
-    return None
-
-
 def create_splits(metadata):
-    if abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) > 1e-8:
-        raise ValueError("Train/validation/test ratios must sum to 1.")
+    stratify_labels = metadata.groupby(
+        ["age_class", "gender"]
+    ).ngroup().astype(str)
 
-    strata = _safe_strata(metadata)
+    if stratify_labels.value_counts().min() < 2:
+        raise ValueError(
+            "Stratification groups must contain at least two samples. "
+            "Use wider age bins or disable age-gender stratification."
+        )
+
     train, temp = train_test_split(
         metadata,
         test_size=VAL_RATIO + TEST_RATIO,
-        stratify=strata
+        random_state=RANDOM_STATE,
+        stratify=stratify_labels
     )
 
     relative_test_ratio = TEST_RATIO / (VAL_RATIO + TEST_RATIO)
-    temp_strata = _safe_strata(temp)
+
+    temp_stratify_labels = stratify_labels.loc[temp.index]
+    if temp_stratify_labels.value_counts().min() < 2:
+        temp_stratify_labels = temp["gender"].astype(str)
+
     val, test = train_test_split(
         temp,
         test_size=relative_test_ratio,
-        stratify=temp_strata
+        random_state=RANDOM_STATE,
+        stratify=temp_stratify_labels
     )
 
     train = train.copy()
     val = val.copy()
     test = test.copy()
 
-    train[METADATA_COLUMNS].to_csv(METADATA_DIR / "train.csv", index=False)
-    val[METADATA_COLUMNS].to_csv(METADATA_DIR / "val.csv", index=False)
-    test[METADATA_COLUMNS].to_csv(METADATA_DIR / "test.csv", index=False)
+    train["split"] = "train"
+    val["split"] = "validation"
+    test["split"] = "test"
+
+    train[METADATA_COLUMNS].to_csv(
+        METADATA_DIR / "train.csv",
+        index=False
+    )
+
+    val[METADATA_COLUMNS].to_csv(
+        METADATA_DIR / "val.csv",
+        index=False
+    )
+
+    test[METADATA_COLUMNS].to_csv(
+        METADATA_DIR / "test.csv",
+        index=False
+    )
+
+    combined = pd.concat(
+        [train, val, test],
+        ignore_index=True
+    )
 
     print("\n" + "=" * 60)
     print("DATA SPLIT")
     print("=" * 60)
+
     print(f"Train      : {len(train):,}")
     print(f"Validation : {len(val):,}")
     print(f"Test       : {len(test):,}")
+
+    print("\nGender distribution:")
+    print(
+        pd.crosstab(
+            combined["split"],
+            combined["gender"],
+            normalize="index"
+        ).rename(
+            columns={
+                0: "Male",
+                1: "Female"
+            }
+        )
+    )
 
     return train, val, test
 
@@ -226,11 +291,13 @@ def main():
 
     metadata = inspect_dataset()
     if metadata.empty:
-        raise RuntimeError("No valid UTKFace images were found.")
+        raise RuntimeError(
+            "No valid UTKFace images were found."
+        )
 
     metadata = clean_metadata(metadata)
-    create_splits(metadata)
 
+    train, val, test = create_splits(metadata)
 
 if __name__ == "__main__":
     main()

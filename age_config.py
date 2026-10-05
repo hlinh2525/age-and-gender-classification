@@ -11,9 +11,6 @@ NUM_AGE_CLASSES = len(AGE_LABELS)
 
 
 def age_to_class(age):
-    age = int(age)
-    if not 0 <= age <= 116:
-        raise ValueError(f"Age must be in [0, 116], got {age}")
     if age <= 12:
         return 0
     if age <= 19:
